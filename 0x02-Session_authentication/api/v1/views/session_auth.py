@@ -1,44 +1,53 @@
 #!/usr/bin/env python3
-""" Module of Index views
+
 """
-from flask import jsonify, abort
+Session Authentication Views
+"""
+from flask import request, jsonify, abort
 from api.v1.views import app_views
+from models.user import User
+from os import getenv
 
 
-@app_views.route('/status', methods=['GET'], strict_slashes=False)
-def status() -> str:
-    """ GET /api/v1/status
+@app_views.route('/auth_session/login', methods=['POST'], strict_slashes=False)
+def login():
+    """ POST /auth_session/login
     Return:
-      - the status of the API
+      - Response
     """
-    return jsonify({"status": "OK"})
+    user_email = request.form.get('email')
+    user_pwd = request.form.get('password')
+    if not user_email:
+        return jsonify(error="email missing"), 400
+    if not user_pwd:
+        return jsonify(error="password missing"), 400
+    try:
+        user = User.search({"email": user_email})
+    except Exception:
+        return jsonify(error="no user found for this email"), 404
+    if not user:
+        return jsonify(error="no user found for this email"), 404
+    for u in user:
+        if u.is_valid_password(user_pwd):
+            user_id = u.id
+            from api.v1.app import auth
+            session_id = auth.create_session(user_id)
+            response = jsonify(u.to_json())
+            response.set_cookie(getenv('SESSION_NAME'), session_id)
+            return response
+        else:
+            return jsonify(error="wrong password"), 401
+    return jsonify(error="no user found for this email"), 404
 
 
-@app_views.route('/stats/', strict_slashes=False)
-def stats() -> str:
-    """ GET /api/v1/stats
+@app_views.route('/auth_session/logout', methods=['DELETE'],
+                 strict_slashes=False)
+def logout():
+    """ DELETE /auth_session/logout
     Return:
-      - the number of each objects
+      - Response
     """
-    from models.user import User
-    stats = {}
-    stats['users'] = User.count()
-    return jsonify(stats)
-
-
-@app_views.route('/unauthorized', methods=['GET'], strict_slashes=False)
-def unauthorized() -> str:
-    """ GET /api/v1/unauthorized
-    Return:
-      - raises a 401 error by using abort
-    """
-    abort(401)
-
-
-@app_views.route('/forbidden', methods=['GET'], strict_slashes=False)
-def forbidden() -> str:
-    """ GET /api/v1/forbidden
-    Return:
-      - raises a 403 error by using abort
-    """
-    abort(403)
+    from api.v1.app import auth
+    if auth.destroy_session(request):
+        return jsonify({}), 200
+    abort(404)
